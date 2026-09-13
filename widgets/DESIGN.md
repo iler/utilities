@@ -58,6 +58,11 @@ ISO 8601 strings.
   so that window is absent. The Alibaba line is shorter than the other two.
 - **`bl` writes its JSON error object to stderr**, not stdout, so the reader must
   merge the streams to tell "signed out" from "broken".
+- **The nvm node directory changes with each node update.** A PATH in the plist
+  that names one node version breaks after the update. The Alibaba reader
+  therefore finds the newest nvm node that has `bl`, and puts that bin directory
+  first in PATH, because `bl` starts with `env node`. The `up` script copies the
+  global packages into a new node, so `bl` stays available.
 - **The agent sandbox cannot read `~/.bailian` or launch the widget binary.**
   Alibaba and the push step can only be tested by the user. launchd is not
   sandboxed, so the scheduled job is unaffected.

@@ -112,14 +112,27 @@ snap_mas() {
 # Job commands that need more than one line.
 # --------------------------------------------------------------------------
 
-# Install the newest LTS node, with the newest npm in it.
+# Install the newest LTS node, with the newest npm in it. Copy the global
+# packages of the node that you use now into a new node.
 up_node_update() {
+  local from target
   # nvm.sh reads unset variables. It therefore needs "set +u". The job runs in
   # a subshell, so this stays inside the job.
   set +u
   export NVM_DIR
   . "$NVM_DIR/nvm.sh" || return 1
-  nvm install --lts --latest-npm
+
+  # nvm fails when the source node is the same as the new node. Copy the
+  # packages only when the newest LTS is not installed yet.
+  from=$(nvm current)
+  target=$(nvm version-remote --lts)
+  case "$from" in v*) ;; *) from="" ;; esac
+  case "$target" in v*) ;; *) target="" ;; esac
+  if [ -n "$from" ] && [ -n "$target" ] && [ "$(nvm version "$target")" = "N/A" ]; then
+    nvm install --lts --latest-npm --reinstall-packages-from="$from"
+  else
+    nvm install --lts --latest-npm
+  fi
 }
 
 # Install the macOS system updates.

@@ -48,7 +48,7 @@ At the end you get the change list:
 | Claude skills | `npx --yes skills update -g -y` | node |
 | npm globals | `npm update -g` | node |
 | npm backup | `npm list --global --depth=0 --json` to a file | node |
-| Node (nvm) | `nvm install --lts --latest-npm` | node |
+| Node (nvm) | `nvm install --lts --latest-npm`, with `--reinstall-packages-from` for a new node | node |
 | Homebrew index | `brew update` | brew |
 | Homebrew apps | `brew upgrade` | brew |
 | Homebrew backup | `brew bundle dump` to a Brewfile | brew |
@@ -164,6 +164,11 @@ The node update runs last in the `node` lane, and not in a lane of its own.
 `nvm install --latest-npm` can write npm into the node that you use now. That
 must not happen while `npm update -g` runs. The last place also protects the
 other jobs: a failed download of a new node version then loses nothing.
+
+A new node version starts with no global packages. When the newest LTS is not
+installed yet, the node job therefore copies the global packages of the node
+that you use now into the new node. nvm fails if the two versions are the same,
+so the job does not copy when the newest LTS is already installed.
 
 ### The change list
 

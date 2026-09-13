@@ -5,6 +5,23 @@
 # The 5-hour window is absent while Alibaba keeps that limit lifted.
 set -uo pipefail
 
+fail() { printf '{"provider":"Alibaba","ok":false,"note":"%s","windows":[],"fetched_at":null}\n' "$1"; exit 0; }
+
+# launchd gives a bare PATH, and bl lives in an nvm node directory whose name
+# changes with each node update. Use the newest nvm node that has bl. bl starts
+# with "env node", so that bin directory goes first in PATH.
+if ! command -v bl >/dev/null 2>&1; then
+  nvm_node="${NVM_DIR:-$HOME/.nvm}/versions/node"
+  for v in $(ls -1 "$nvm_node" 2>/dev/null | sort -V -r); do
+    if [ -x "$nvm_node/$v/bin/bl" ]; then
+      PATH="$nvm_node/$v/bin:$PATH"
+      break
+    fi
+  done
+fi
+
+command -v bl >/dev/null 2>&1 || fail "not installed"
+
 raw="$(bl usage token-plan --output json 2>&1)"
 
 if [ -z "$raw" ] || printf '%s' "$raw" | jq -e '.error' >/dev/null 2>&1; then

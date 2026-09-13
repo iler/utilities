@@ -12,12 +12,12 @@
   </array>
 
   <!-- launchd gives a bare PATH, so every tool is listed here.
-       The bailian-cli path is pinned to node v24.14.1. Regenerate this file
-       after a node upgrade, or the Alibaba line will read "sign in". -->
+       No nvm node directory is listed, because its name changes with each
+       node update. lib/read-alibaba.sh finds bailian-cli in nvm itself. -->
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/Users/ilari/.local/bin:/Users/ilari/.nvm/versions/node/v24.14.1/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <string>/Users/ilari/.local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
   </dict>
 
   <key>StartInterval</key>
