@@ -1,0 +1,803 @@
+#!/usr/bin/env bash
+#
+# up - update all developer tools with one command.
+#
+# The script puts each job in a "lane". Lanes run at the same time.
+# Jobs in one lane run in sequence. This stops two npm processes from
+# writing to the same files.
+#
+# The script needs bash 3.2 or later. It needs jq for the change list of the
+# skills and the npm globals. Without jq those two lists stay empty.
+
+set -u
+set -o pipefail
+
+VERSION="1.1.0"
+SELF="$(basename "$0")"
+
+LOG_ROOT="${UP_LOG_DIR:-$HOME/.local/state/update-script}"
+KEEP_RUNS=10
+FRAME_DELAY=0.1
+
+OPT_COLOR="auto"
+OPT_SEQUENTIAL=0
+OPT_VERBOSE=0
+OPT_DRYRUN=0
+OPT_ONLY=""
+
+# --------------------------------------------------------------------------
+# Job list. Add a line here to add a job.
+#   add_job <name> <lane> <necessary program> <command> [snapshot function]
+#
+# The snapshot function prints one line for each installed item:
+#   <name> <version>
+# The script runs it before and after the job. It then compares the two lists
+# and reports the changes. Leave it empty if the job installs nothing.
+#
+# Jobs in the same lane run in sequence. Different lanes run at the same time.
+# Put the command in single quotes if it contains a dollar sign. The shell
+# expands a double-quoted string too early.
+# --------------------------------------------------------------------------
+TASK_NAME=(); TASK_LANE=(); TASK_BIN=(); TASK_CMD=(); TASK_SNAP=()
+
+add_job() {
+  TASK_NAME[${#TASK_NAME[@]}]="$1"
+  TASK_LANE[${#TASK_LANE[@]}]="$2"
+  TASK_BIN[${#TASK_BIN[@]}]="$3"
+  TASK_CMD[${#TASK_CMD[@]}]="$4"
+  TASK_SNAP[${#TASK_SNAP[@]}]="${5:-}"
+}
+
+# The skills tool keeps a hash of each installed skill in this file.
+SKILL_LOCK="${SKILL_LOCK:-$HOME/.agents/.skill-lock.json}"
+
+# nvm keeps every installed node version below this directory.
+NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+
+# The backup jobs write their package lists below this directory.
+BACKUP_DIR="${UP_BACKUP_DIR:-$HOME/.config}"
+
+snap_skills() {
+  [ -r "$SKILL_LOCK" ] || return 0
+  jq -r '.skills // {} | to_entries[]
+          | "\(.key) \(.value.skillFolderHash[0:7] // "?")"' \
+     "$SKILL_LOCK" 2>/dev/null | sort
+}
+
+snap_npm_globals() {
+  npm ls -g --depth=0 --json 2>/dev/null \
+    | jq -r '.dependencies // {} | to_entries[]
+             | "\(.key) \(.value.version // "?")"' 2>/dev/null | sort
+}
+
+snap_brew() {
+  brew list --versions 2>/dev/null | sort
+}
+
+# One line for each installed node version. The version column holds the npm
+# version inside that node.
+snap_node() {
+  local d="$NVM_DIR/versions/node" v pkg ver
+  [ -d "$d" ] || return 0
+  for v in "$d"/*; do
+    [ -d "$v" ] || continue
+    pkg="$v/lib/node_modules/npm/package.json"
+    ver=""
+    [ -r "$pkg" ] && ver=$(jq -r '.version // "?"' "$pkg" 2>/dev/null)
+    [ -n "$ver" ] || ver="?"
+    printf '%s npm %s\n' "${v##*/}" "$ver"
+  done | sort
+}
+
+# mas list prints: <id> <name> (<version>). The change list needs the name in
+# one field. Join the words of the name with an underscore.
+snap_mas() {
+  mas list 2>/dev/null | awk '
+    {
+      sub(/\r$/, "")
+      sub(/^[0-9]+[ \t]+/, "")
+      sub(/[ \t]+$/, "")
+      ver = "?"
+      if (match($0, /\([^()]*\)$/)) {
+        ver = substr($0, RSTART + 1, RLENGTH - 2)
+        $0 = substr($0, 1, RSTART - 1)
+        sub(/[ \t]+$/, "")
+      }
+      gsub(/[ \t]+/, "_")
+      if ($0 != "") print $0 " " ver
+    }' | sort
+}
+
+# --------------------------------------------------------------------------
+# Job commands that need more than one line.
+# --------------------------------------------------------------------------
+
+# Install the newest LTS node, with the newest npm in it.
+up_node_update() {
+  # nvm.sh reads unset variables. It therefore needs "set +u". The job runs in
+  # a subshell, so this stays inside the job.
+  set +u
+  export NVM_DIR
+  . "$NVM_DIR/nvm.sh" || return 1
+  nvm install --lts --latest-npm
+}
+
+# Install the macOS system updates.
+up_macos_update() {
+  # Most updates need root. A job gets no keyboard input, so use sudo only
+  # when sudo needs no password. Run "sudo -v" before up to make that true.
+  if sudo -n true 2>/dev/null; then
+    sudo softwareupdate --install --all --agree-to-license
+  else
+    softwareupdate --install --all --agree-to-license
+  fi
+}
+
+# Write a Brewfile with the taps, the formulae, the casks and the App Store
+# apps. Homebrew writes the description of each item itself.
+up_brew_backup() {
+  local what="--formula --cask --tap"
+  mkdir -p "$BACKUP_DIR/brew" || return 1
+  have_bin mas && what="$what --mas"
+  # The shell must split $what into separate words here.
+  brew bundle dump --force --file="$BACKUP_DIR/brew/Brewfile" $what
+}
+
+# Write the list of the global npm packages.
+up_npm_backup() {
+  local out="$BACKUP_DIR/npm/packages.json"
+  mkdir -p "$BACKUP_DIR/npm" || return 1
+  # npm list reports a bad dependency tree with exit code 1, but it still
+  # writes the list. Accept that as long as the file has content.
+  npm list --global --depth=0 --json > "$out" || [ -s "$out" ]
+}
+
+register_jobs() {
+  add_job "Claude skills"    node  "npx"  "npx --yes skills update -g -y" snap_skills
+  add_job "npm globals"      node  "npm"  "npm update -g"                 snap_npm_globals
+  add_job "npm backup"       node  "npm"  "up_npm_backup"                 ""
+  add_job "Node (nvm)"       node  "$NVM_DIR/nvm.sh" "up_node_update"     snap_node
+  add_job "Homebrew index"   brew  "brew" "brew update"                   ""
+  add_job "Homebrew apps"    brew  "brew" "brew upgrade"                  snap_brew
+  add_job "Homebrew backup"  brew  "brew" "up_brew_backup"                ""
+  add_job "Homebrew cleanup" brew  "brew" "brew cleanup --prune=all"      ""
+  add_job "macOS updates"    macos "softwareupdate" "up_macos_update"     ""
+  add_job "App Store apps"   mas   "mas"  "mas upgrade"                   snap_mas
+}
+
+# --------------------------------------------------------------------------
+# Style
+# --------------------------------------------------------------------------
+setup_style() {
+  local use_color=0
+  case "$OPT_COLOR" in
+    always) use_color=1 ;;
+    never)  use_color=0 ;;
+    *)      if [ -t 1 ] && [ "${TERM:-dumb}" != "dumb" ] && [ -z "${NO_COLOR:-}" ]; then use_color=1; fi ;;
+  esac
+
+  if [ "$use_color" -eq 1 ]; then
+    C_RESET=$'\033[0m'; C_DIM=$'\033[2m'; C_BOLD=$'\033[1m'
+    C_GREEN=$'\033[32m'; C_RED=$'\033[31m'; C_YELLOW=$'\033[33m'
+    C_BLUE=$'\033[34m'; C_CYAN=$'\033[36m'; C_GREY=$'\033[90m'
+  else
+    C_RESET=""; C_DIM=""; C_BOLD=""; C_GREEN=""; C_RED=""
+    C_YELLOW=""; C_BLUE=""; C_CYAN=""; C_GREY=""
+  fi
+
+  case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+    *UTF-8*|*utf8*|*UTF8*)
+      SPIN=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+      M_OK="✔"; M_FAIL="✖"; M_SKIP="⊘"; M_WAIT="·"; M_MISS="—"
+      BAR_FULL="█"; BAR_EMPTY="░"; ELL="…"
+      ARROW="→"; M_UP="↑"; M_ADD="+"; M_DEL="−"
+      ;;
+    *)
+      SPIN=('|' '/' '-' '\')
+      M_OK="+"; M_FAIL="x"; M_SKIP="s"; M_WAIT="."; M_MISS="-"
+      BAR_FULL="#"; BAR_EMPTY="."; ELL="~"
+      ARROW="->"; M_UP="^"; M_ADD="+"; M_DEL="-"
+      ;;
+  esac
+}
+
+# Remove escape codes and control characters from a stream.
+strip_ansi() {
+  LC_ALL=C sed -E $'s/\x1b\\[[0-9;?]*[a-zA-Z]//g' \
+    | LC_ALL=C tr -d '\000-\010\013\014\016-\037\177'
+}
+
+fmt_dur() { printf '%02d:%02d' $(( $1 / 60 )) $(( $1 % 60 )); }
+
+now() { date +%s; }
+
+# A plain name must be a program in the PATH. A name with a slash is a file
+# that a job reads, for example nvm.sh. Test the file instead.
+have_bin() {
+  case "$1" in
+    */*) [ -e "$1" ] ;;
+    *)   command -v "$1" >/dev/null 2>&1 ;;
+  esac
+}
+
+# Show the file name only, so a full path does not fill the board.
+bin_label() { printf '%s' "${1##*/}"; }
+
+# --------------------------------------------------------------------------
+# Job state. Each job keeps its state in a small file.
+# --------------------------------------------------------------------------
+set_state() { printf '%s\n' "$2" > "$RUNDIR/$1.state"; }
+
+get_state() { cat "$RUNDIR/$1.state" 2>/dev/null || printf 'pending\n'; }
+
+job_elapsed() {
+  local i="$1" start end
+  start=$(cat "$RUNDIR/$i.start" 2>/dev/null) || return 1
+  [ -n "$start" ] || return 1
+  end=$(cat "$RUNDIR/$i.end" 2>/dev/null)
+  [ -n "$end" ] || end=$(now)
+  echo $(( end - start ))
+}
+
+# Print the last useful output line of a job.
+tail_line() {
+  local f="$RUNDIR/$1.log"
+  [ -s "$f" ] || return 0
+  tail -c 4000 "$f" | tr '\r' '\n' | strip_ansi \
+    | grep -v '^[[:space:]]*$' | tail -n 1
+}
+
+# --------------------------------------------------------------------------
+# Change list. The script compares the snapshot from before the job with the
+# snapshot from after the job.
+# --------------------------------------------------------------------------
+
+# Write a snapshot to <job>.before or <job>.after.
+take_snapshot() {
+  local i="$1" when="$2"
+  [ -n "${TASK_SNAP[$i]}" ] || return 0
+  eval "${TASK_SNAP[$i]}" > "$RUNDIR/$i.$when" 2>/dev/null
+  return 0
+}
+
+# Compare two snapshots. Print one line for each change:
+#   <mark> TAB <name> TAB <old version> TAB <new version>
+# The mark is ~ for an update, + for a new item and - for a removed item.
+# The fields use the unit separator, not a tab. The shell joins repeated tabs
+# into one separator. That would drop an empty field.
+SEP=$'\037'
+
+diff_snapshot() {
+  # Field 1 holds a sort key. It groups updates, then new items, then removed
+  # items. The cut command removes the key again.
+  awk '
+    function ver(  i, s) {
+      s = $2
+      for (i = 3; i <= NF; i++) s = s " " $i
+      return s
+    }
+    NR == FNR { old[$1] = ver(); had[$1] = 1; next }
+    {
+      v = ver()
+      if (!($1 in had))         printf "2\037+\037%s\037\037%s\n", $1, v
+      else if (old[$1] != v)    printf "1\037~\037%s\037%s\037%s\n", $1, old[$1], v
+      seen[$1] = 1
+    }
+    END {
+      for (n in old) if (!(n in seen)) printf "3\037-\037%s\037%s\037\n", n, old[n]
+    }
+  ' "$1" "$2" | sort -t"$SEP" -k1,1 -k3,3 | cut -d"$SEP" -f2-
+}
+
+# Build the change list of one job, then note the result for the board.
+record_changes() {
+  local i="$1" n=0
+  if [ -s "$RUNDIR/$i.before" ] && [ -s "$RUNDIR/$i.after" ]; then
+    diff_snapshot "$RUNDIR/$i.before" "$RUNDIR/$i.after" > "$RUNDIR/$i.changes"
+    n=$(wc -l < "$RUNDIR/$i.changes" 2>/dev/null | tr -d ' ')
+    [ -n "$n" ] || n=0
+    if [ "$n" -gt 0 ]; then
+      printf '%s changed\n' "$n" > "$RUNDIR/$i.last"
+    else
+      printf 'already up to date\n' > "$RUNDIR/$i.last"
+    fi
+  else
+    tail_line "$i" > "$RUNDIR/$i.last"
+  fi
+  return 0
+}
+
+# Print the change list of every job.
+print_changes() {
+  local i f n any=0 name_w mark name old new color label
+  for i in $SELECTED; do
+    [ -s "$RUNDIR/$i.changes" ] && any=1
+  done
+  if [ "$any" -eq 0 ]; then
+    printf '\n  %sNothing changed. Every tool is up to date.%s\n' "$C_GREY" "$C_RESET"
+    return 0
+  fi
+
+  for i in $SELECTED; do
+    f="$RUNDIR/$i.changes"
+    [ -s "$f" ] || continue
+    n=$(wc -l < "$f" | tr -d ' ')
+    printf '\n  %s%s%s %s%s changed%s\n' \
+      "$C_BOLD" "${TASK_NAME[$i]}" "$C_RESET" "$C_GREY" "$n" "$C_RESET"
+    name_w=$(awk -F'\037' '{ if (length($2) > w) w = length($2) } END { print w+0 }' "$f")
+    [ "$name_w" -gt 34 ] && name_w=34
+    while IFS="$SEP" read -r mark name old new; do
+      case "$mark" in
+        '+') color="$C_GREEN"; mark="$M_ADD"; label="$new  (new)" ;;
+        '-') color="$C_YELLOW"; mark="$M_DEL"; label="(removed)" ;;
+        *)   color="$C_CYAN"; mark="$M_UP"
+             # A content hash tells a human nothing. Show the name only.
+             case "${old}${new}" in
+               [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) label="" ;;
+               *) label="$old $ARROW $new" ;;
+             esac
+             ;;
+      esac
+      if [ -n "$label" ]; then
+        printf '    %s%s%s %-*s %s%s%s\n' \
+          "$color" "$mark" "$C_RESET" "$name_w" "$name" "$C_DIM" "$label" "$C_RESET"
+      else
+        printf '    %s%s%s %s\n' "$color" "$mark" "$C_RESET" "$name"
+      fi
+    done < "$f"
+  done
+  return 0
+}
+
+# --------------------------------------------------------------------------
+# Runner
+# --------------------------------------------------------------------------
+run_job() {
+  local i="$1" rc
+  set_state "$i" running
+  now > "$RUNDIR/$i.start"
+  take_snapshot "$i" before
+  ( eval "${TASK_CMD[$i]}" ) >"$RUNDIR/$i.log" 2>&1 </dev/null
+  rc=$?
+  take_snapshot "$i" after
+  now > "$RUNDIR/$i.end"
+  record_changes "$i"
+  if [ "$rc" -eq 0 ]; then
+    set_state "$i" ok
+  else
+    printf '%s\n' "$rc" > "$RUNDIR/$i.rc"
+    set_state "$i" fail
+  fi
+  return $rc
+}
+
+# Run every job of one lane, in order. Stop the lane after a failure.
+run_lane() {
+  local lane="$1" i failed=0
+  for i in $SELECTED; do
+    [ "${TASK_LANE[$i]}" = "$lane" ] || continue
+    if [ "$failed" -eq 1 ]; then set_state "$i" skipped; continue; fi
+    if ! have_bin "${TASK_BIN[$i]}"; then set_state "$i" missing; continue; fi
+    run_job "$i" || failed=1
+  done
+}
+
+# --------------------------------------------------------------------------
+# Live board
+# --------------------------------------------------------------------------
+FRAME_LINES=0
+
+# Ask the terminal for its width. Inside $( ) the standard output is a pipe,
+# so tput cannot see the terminal and reports the default 80. stty reads the
+# standard input, which is still the terminal.
+TCOLS=80; TROWS=24
+
+term_size() {
+  local size c r
+  size=$(stty size 2>/dev/null)
+  r=${size%% *}; c=${size##* }
+  case "$c" in ''|*[!0-9]*) c=$(tput cols 2>/dev/null) ;; esac
+  case "$c" in ''|*[!0-9]*) c="${COLUMNS:-80}" ;; esac
+  case "$c" in ''|*[!0-9]*|0) c=80 ;; esac
+  case "$r" in ''|*[!0-9]*) r=$(tput lines 2>/dev/null) ;; esac
+  case "$r" in ''|*[!0-9]*) r="${LINES:-24}" ;; esac
+  case "$r" in ''|*[!0-9]*|0) r=24 ;; esac
+  TCOLS=$c; TROWS=$r
+}
+
+# Erase from the cursor to the end of the line. Old text on a longer line
+# must not stay on the screen.
+EL=$'\033[K'
+
+
+# One status line for a very short window. It rewrites itself in place, so it
+# never needs to move the cursor up.
+draw_one_line() {
+  local cols="$1" i state done_n=0 total_n=0 mark txt
+  for i in $SELECTED; do
+    total_n=$(( total_n + 1 ))
+    case "$(get_state "$i")" in
+      ok|fail|skipped|missing) done_n=$(( done_n + 1 )) ;;
+    esac
+  done
+  mark="${SPIN[$(( SPIN_TICK % ${#SPIN[@]} ))]}"
+  [ "$done_n" -eq "$total_n" ] && mark="$M_OK"
+  txt="  $mark  ${done_n}/${total_n} done   $(fmt_dur $(( $(now) - RUN_START )))"
+  [ ${#txt} -gt "$cols" ] && txt="${txt:0:$cols}"
+  if [ "$FRAME_LINES" -gt 0 ]; then
+    printf '\033[%dA\033[0J' "$FRAME_LINES"
+    FRAME_LINES=0
+  fi
+  printf '\r%s%s' "$txt" "$EL"
+  return 0
+}
+
+draw_frame() {
+  local cols name_w i state mark color spin_i frame elapsed line done_n total_n
+  local n_jobs=0 gap rows
+  gap="${EL}"$'\n'
+  term_size
+  cols=$TCOLS; rows=$TROWS
+  name_w=0
+  for i in $SELECTED; do
+    [ ${#TASK_NAME[$i]} -gt $name_w ] && name_w=${#TASK_NAME[$i]}
+    n_jobs=$(( n_jobs + 1 ))
+  done
+
+  # A frame taller than the window makes the terminal scroll. The cursor then
+  # moves to the wrong place and the old frame stays on the screen. Drop the
+  # blank lines first. Use one status line only if the window is still short.
+  if [ $(( n_jobs + 5 )) -gt "$rows" ]; then
+    gap=""
+    if [ $(( n_jobs + 3 )) -gt "$rows" ]; then
+      draw_one_line "$cols"
+      return
+    fi
+  fi
+
+  spin_i=$(( SPIN_TICK % ${#SPIN[@]} ))
+  done_n=0; total_n=0
+  frame=""
+
+  local run_elapsed
+  run_elapsed=$(fmt_dur $(( $(now) - RUN_START )))
+  # Cut the title if the terminal is very narrow.
+  local title="Updating your tools" keep
+  if [ $(( ${#title} + 10 )) -gt "$cols" ]; then
+    keep=$(( cols - 10 ))
+    [ "$keep" -lt 1 ] && keep=1
+    title="${title:0:$keep}"
+  fi
+  frame="${frame}${C_BOLD}  ${title}${C_RESET}${C_GREY}   ${run_elapsed}${C_RESET}${EL}"$'\n'"${gap}"
+
+  for i in $SELECTED; do
+    total_n=$(( total_n + 1 ))
+    state=$(get_state "$i")
+    line=""
+    case "$state" in
+      running) mark="${SPIN[$spin_i]}"; color="$C_CYAN" ;;
+      ok)      mark="$M_OK";   color="$C_GREEN"; done_n=$(( done_n + 1 )) ;;
+      fail)    mark="$M_FAIL"; color="$C_RED";   done_n=$(( done_n + 1 )) ;;
+      skipped) mark="$M_SKIP"; color="$C_YELLOW"; done_n=$(( done_n + 1 )) ;;
+      missing) mark="$M_MISS"; color="$C_GREY";  done_n=$(( done_n + 1 )) ;;
+      *)       mark="$M_WAIT"; color="$C_GREY" ;;
+    esac
+
+    elapsed=$(job_elapsed "$i") && elapsed=$(fmt_dur "$elapsed") || elapsed="     "
+
+    case "$state" in
+      running) line=$(tail_line "$i"); [ -z "$line" ] && line="working" ;;
+      missing) line="$(bin_label "${TASK_BIN[$i]}") is not installed" ;;
+      skipped) line="skipped after a failure in the same lane" ;;
+      fail)    line="see the log below" ;;
+      pending) line="waiting" ;;
+      ok)      line=$(cat "$RUNDIR/$i.last" 2>/dev/null) ;;
+    esac
+
+    # Cut the note so that the line fits the terminal.
+    # The visible prefix is: 2 spaces, mark, 2 spaces, name, 1 space,
+    # 5 digits of time, 2 spaces.
+    local prefix_w=$(( name_w + 13 ))
+    local max_note=$(( cols - prefix_w - 1 ))
+    if [ "$max_note" -lt 1 ]; then
+      line=""
+    elif [ ${#line} -gt "$max_note" ]; then
+      line="${line:0:$(( max_note - 1 ))}${ELL}"
+    fi
+
+    frame="${frame}$(printf '  %s%s%s  %-*s %s%5s%s  %s%s%s' \
+      "$color" "$mark" "$C_RESET" \
+      "$name_w" "${TASK_NAME[$i]}" \
+      "$C_GREY" "$elapsed" "$C_RESET" \
+      "$C_DIM" "$line" "$C_RESET")${EL}"$'\n'
+  done
+
+  # Progress bar
+  local bar_w=28 filled j bar=""
+  [ $(( cols - 12 )) -lt $bar_w ] && bar_w=$(( cols - 12 ))
+  [ "$bar_w" -lt 4 ] && bar_w=4
+  filled=0
+  [ "$total_n" -gt 0 ] && filled=$(( done_n * bar_w / total_n ))
+  j=0
+  while [ $j -lt $bar_w ]; do
+    if [ $j -lt $filled ]; then bar="${bar}${BAR_FULL}"; else bar="${bar}${BAR_EMPTY}"; fi
+    j=$(( j + 1 ))
+  done
+  frame="${frame}${gap}"
+  frame="${frame}  ${C_BLUE}${bar}${C_RESET}  ${C_GREY}${done_n}/${total_n}${C_RESET}${EL}"$'\n'
+
+  # Move the cursor up over the old frame, then draw the new one.
+  if [ "$FRAME_LINES" -gt 0 ]; then
+    printf '\033[%dA\033[0J' "$FRAME_LINES"
+  fi
+  printf '%s' "$frame"
+  FRAME_LINES=$(printf '%s' "$frame" | grep -c '' )
+}
+
+cleanup() {
+  [ "${CURSOR_HIDDEN:-0}" -eq 1 ] && printf '\033[?25h'
+  [ "${WRAP_OFF:-0}" -eq 1 ] && printf '\033[?7h'
+  local p
+  for p in ${LANE_PIDS:-}; do kill "$p" 2>/dev/null; done
+}
+
+# --------------------------------------------------------------------------
+# Report
+# --------------------------------------------------------------------------
+print_summary() {
+  local i state failed=0 name_w=0
+  for i in $SELECTED; do
+    [ ${#TASK_NAME[$i]} -gt $name_w ] && name_w=${#TASK_NAME[$i]}
+  done
+
+  printf '\n'
+  for i in $SELECTED; do
+    state=$(get_state "$i")
+    [ "$state" = "fail" ] && failed=1
+  done
+
+  local total
+  total=$(fmt_dur $(( $(now) - RUN_START )))
+  if [ "$failed" -eq 1 ]; then
+    printf '  %sSome updates failed.%s   %stotal %s%s\n' \
+      "$C_RED$C_BOLD" "$C_RESET" "$C_GREY" "$total" "$C_RESET"
+  else
+    printf '  %sAll updates are done.%s   %stotal %s%s\n' \
+      "$C_GREEN$C_BOLD" "$C_RESET" "$C_GREY" "$total" "$C_RESET"
+  fi
+
+  print_changes
+
+  # Show the end of the log of each failed job.
+  for i in $SELECTED; do
+    [ "$(get_state "$i")" = "fail" ] || continue
+    printf '\n  %s%s %s failed (exit %s)%s\n' "$C_RED" "$M_FAIL" \
+      "${TASK_NAME[$i]}" "$(cat "$RUNDIR/$i.rc" 2>/dev/null || echo '?')" "$C_RESET"
+    printf '  %s%s%s\n' "$C_GREY" "$(printf '%.0s-' $(seq 1 40))" "$C_RESET"
+    tail -n 25 "$RUNDIR/$i.log" | tr '\r' '\n' | strip_ansi | sed 's/^/  /'
+  done
+
+  printf '\n  %sLogs: %s%s\n' "$C_GREY" "$RUNDIR" "$C_RESET"
+  [ "$failed" -eq 1 ] && return 1
+  return 0
+}
+
+prune_logs() {
+  local old
+  old=$(ls -1dt "$LOG_ROOT"/*/ 2>/dev/null | tail -n +$(( KEEP_RUNS + 1 )))
+  [ -n "$old" ] && printf '%s\n' "$old" | while read -r d; do rm -rf "$d"; done
+  return 0
+}
+
+# --------------------------------------------------------------------------
+# Plain mode. Use it when there is no terminal, or with --verbose.
+# --------------------------------------------------------------------------
+run_plain() {
+  local i state rc=0 dead_lanes=" "
+  for i in $SELECTED; do
+    # A lane stops after a failure. This is the same rule as the board mode.
+    case "$dead_lanes" in
+      *" ${TASK_LANE[$i]} "*)
+        printf '[skip] %s (an earlier job in lane %s failed)\n' \
+          "${TASK_NAME[$i]}" "${TASK_LANE[$i]}"
+        set_state "$i" skipped
+        continue
+        ;;
+    esac
+    if ! have_bin "${TASK_BIN[$i]}"; then
+      printf '[skip] %s (%s is not installed)\n' "${TASK_NAME[$i]}" "$(bin_label "${TASK_BIN[$i]}")"
+      set_state "$i" missing
+      continue
+    fi
+    printf '\n%s==> %s%s\n' "$C_BOLD" "${TASK_NAME[$i]}" "$C_RESET"
+    now > "$RUNDIR/$i.start"
+    set_state "$i" running
+    take_snapshot "$i" before
+    if [ "$OPT_VERBOSE" -eq 1 ]; then
+      ( eval "${TASK_CMD[$i]}" ) 2>&1 </dev/null | tee "$RUNDIR/$i.log"
+      state=${PIPESTATUS[0]}
+    else
+      ( eval "${TASK_CMD[$i]}" ) >"$RUNDIR/$i.log" 2>&1 </dev/null
+      state=$?
+    fi
+    take_snapshot "$i" after
+    now > "$RUNDIR/$i.end"
+    record_changes "$i"
+    if [ "$state" -eq 0 ]; then
+      set_state "$i" ok
+      printf '%s%s done in %s%s\n' "$C_GREEN" "$M_OK" "$(fmt_dur "$(job_elapsed "$i")")" "$C_RESET"
+    else
+      printf '%s\n' "$state" > "$RUNDIR/$i.rc"
+      set_state "$i" fail
+      rc=1
+      dead_lanes="${dead_lanes}${TASK_LANE[$i]} "
+      printf '%s%s failed (exit %s)%s\n' "$C_RED" "$M_FAIL" "$state" "$C_RESET"
+    fi
+  done
+  return $rc
+}
+
+# --------------------------------------------------------------------------
+# Command line
+# --------------------------------------------------------------------------
+usage() {
+  cat <<HELP
+${SELF} ${VERSION} - update all developer tools with one command.
+
+USAGE
+  ${SELF} [options]
+
+OPTIONS
+  -s, --sequential   Run all jobs one after the other.
+  -v, --verbose      Show the raw output. This turns off the live board.
+  -o, --only <name>  Run only the jobs that match <name> or lane <name>.
+  -n, --dry-run      Show the jobs and the commands. Do not run them.
+      --color <when> always, never or auto. The default is auto.
+  -l, --list         List the jobs and stop.
+  -h, --help         Show this help.
+      --version      Show the version.
+
+EXAMPLES
+  ${SELF}                 Run all updates.
+  ${SELF} --only brew     Run only the Homebrew lane.
+  ${SELF} -v --only npm   Update the npm globals and show the raw output.
+
+NOTES
+  The script lists every package that changed. It reads the installed
+  versions before and after each job, then compares the two lists.
+  Each job gets a log file in ${LOG_ROOT}.
+  The script keeps the last ${KEEP_RUNS} runs.
+  The jobs get no keyboard input. A job that asks for a password fails.
+  It does not stop and wait.
+  The macOS updates need root. The script uses sudo only when sudo needs no
+  password. Run "sudo -v" first, or that job installs the user updates only.
+  The backup jobs write to ${BACKUP_DIR}. Set UP_BACKUP_DIR to change that.
+HELP
+}
+
+parse_args() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -s|--sequential) OPT_SEQUENTIAL=1 ;;
+      -v|--verbose)    OPT_VERBOSE=1 ;;
+      -n|--dry-run)    OPT_DRYRUN=1 ;;
+      -l|--list)       OPT_DRYRUN=2 ;;
+      -o|--only)       shift; OPT_ONLY="${1:-}" ;;
+      --only=*)        OPT_ONLY="${1#--only=}" ;;
+      --color)         shift; OPT_COLOR="${1:-auto}" ;;
+      --color=*)       OPT_COLOR="${1#--color=}" ;;
+      -h|--help)       usage; exit 0 ;;
+      --version)       printf '%s %s\n' "$SELF" "$VERSION"; exit 0 ;;
+      *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+}
+
+select_jobs() {
+  local i want lname
+  SELECTED=""
+  want=$(printf '%s' "$OPT_ONLY" | tr '[:upper:]' '[:lower:]')
+  i=0
+  while [ $i -lt ${#TASK_NAME[@]} ]; do
+    if [ -z "$want" ]; then
+      SELECTED="$SELECTED $i"
+    else
+      lname=$(printf '%s %s %s' "${TASK_NAME[$i]}" "${TASK_LANE[$i]}" "${TASK_BIN[$i]}" \
+        | tr '[:upper:]' '[:lower:]')
+      case "$lname" in *"$want"*) SELECTED="$SELECTED $i" ;; esac
+    fi
+    i=$(( i + 1 ))
+  done
+  if [ -z "$SELECTED" ]; then
+    printf 'No job matches "%s".\n' "$OPT_ONLY" >&2
+    exit 2
+  fi
+}
+
+lanes_of_selection() {
+  local i
+  for i in $SELECTED; do printf '%s\n' "${TASK_LANE[$i]}"; done | awk '!seen[$0]++'
+}
+
+main() {
+  parse_args "$@"
+  setup_style
+  register_jobs
+  select_jobs
+
+  if [ "$OPT_DRYRUN" -gt 0 ]; then
+    local i
+    printf '\n  %sJobs%s\n\n' "$C_BOLD" "$C_RESET"
+    for i in $SELECTED; do
+      printf '  %s%-17s%s %slane %-5s%s %s%s%s\n' \
+        "$C_CYAN" "${TASK_NAME[$i]}" "$C_RESET" \
+        "$C_GREY" "${TASK_LANE[$i]}" "$C_RESET" \
+        "$C_DIM" "${TASK_CMD[$i]}" "$C_RESET"
+    done
+    printf '\n'
+    exit 0
+  fi
+
+  RUNDIR="$LOG_ROOT/$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$RUNDIR" || { printf 'Cannot create %s\n' "$RUNDIR" >&2; exit 1; }
+  prune_logs
+
+  RUN_START=$(now)
+  local i
+  for i in $SELECTED; do set_state "$i" pending; done
+
+  # Homebrew is quieter with these settings. The index is already fresh.
+  export HOMEBREW_NO_ENV_HINTS=1
+  export HOMEBREW_NO_AUTO_UPDATE=1
+
+  trap cleanup EXIT INT TERM
+
+  # Plain mode: no terminal, or the user asked for raw output.
+  if [ ! -t 1 ] || [ "$OPT_VERBOSE" -eq 1 ]; then
+    run_plain
+    local rc=$?
+    print_changes
+    printf '\n  Logs: %s\n' "$RUNDIR"
+    exit $rc
+  fi
+
+  printf '\033[?25l\033[?7l'; CURSOR_HIDDEN=1; WRAP_OFF=1
+  SPIN_TICK=0
+  LANE_PIDS=""
+
+  if [ "$OPT_SEQUENTIAL" -eq 1 ]; then
+    ( for i in $SELECTED; do
+        if ! have_bin "${TASK_BIN[$i]}"; then set_state "$i" missing; continue; fi
+        run_job "$i"
+      done ) &
+    LANE_PIDS="$!"
+  else
+    local lane
+    for lane in $(lanes_of_selection); do
+      run_lane "$lane" &
+      LANE_PIDS="$LANE_PIDS $!"
+    done
+  fi
+
+  # Draw the board until every lane is finished.
+  local alive p
+  while :; do
+    draw_frame
+    alive=0
+    for p in $LANE_PIDS; do
+      if kill -0 "$p" 2>/dev/null; then alive=1; fi
+    done
+    [ "$alive" -eq 0 ] && break
+    SPIN_TICK=$(( SPIN_TICK + 1 ))
+    sleep "$FRAME_DELAY"
+  done
+  wait
+  draw_frame
+
+  printf '\033[?7h\033[?25h'; WRAP_OFF=0; CURSOR_HIDDEN=0
+  print_summary
+  exit $?
+}
+
+main "$@"

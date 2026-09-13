@@ -1,0 +1,142 @@
+Usage:
+  terminal-widget [--target NAME] [--clear|--clear-buttons] [--text "STRING"|--text -] [--no-wrap] [--ansi-mode auto|on|off] [--strip-colors] [--icon "SF_SYMBOL"] [--font "FONT NAME"] [--font-size POINTS] [--fit-text] [--fg COLOR] [--bg COLOR] [--bg-gradient-from COLOR --bg-gradient-to COLOR --bg-gradient-start N|S|E|W|NW|NE|SW|SE] [--alpha A] [--progress N --progress-format bar|matrix|dots|stack|circle|watch|quadrant|gradient|gradient-horizontal|gradient-vertical --gradient-from COLOR --gradient-to COLOR --gradient-width N] [--chart "N N ..." --chart-format sparkline|spark|bar|graph|line|waveform|wave|area|lollipop|dot|strip|radial|delta|threshold|smooth|sine|peak|neo|rangebar --chart-height N[%] --neo-characters katakana|ascii|binary --base-zero|--base N --bar-radius 0-100 --chart-bar-style glass|solid] [--append VALUES] [--limit N] [--table PATH|-] [--no-header] [--grid none|row|horizontal|column|vertical|both|zebra|zebra-row|zebra-column] [--table-layout auto|equal|fill] [--table-align left,center,right] [--center-table] [--zebra-opacity VALUE] [--caption] [--caption-left TEXT] [--caption-right TEXT] [--annotate] [--label-y] [--timestamp] [--image PATH_OR_URL|--background-image PATH_OR_URL] [--filter FILTER[:VALUE][,FILTER[:VALUE]...]] [--padding N|fill|--fullsize] [--command "CMD"] [--theme|--mode system|light|dark]
+  terminal-widget completions [--shell fish|bash|zsh|all] [--name CMD ...] [--install] [--stdout]
+  terminal-widget log [--level error|warn|info] [--target NAME] [--limit N] [--follow] [--json] [--clear]
+
+Options:
+  completions           Generate Fish/Bash/Zsh completion scripts (see: terminal-widget completions --help)
+  log                   Show recent diagnostic events (see: terminal-widget log --help)
+
+  Target:
+  --target NAME        Widget to update (matches Edit Widget "Target name"). If omitted, uses the last target written (.lastTarget), else the first registered widget name (widget1, widget2, ...), else widget1.
+  --clear              Delete this target's payload file, images, and mirror entry (cloud record too if sync is on).
+  --clear-buttons      Remove launcher buttons from this target; keep all other content.
+
+  Text:
+  --text STRING        Text line (shown above the progress bar when both are set)
+  --command COMMAND    Run command and use its stdout as text
+  --no-wrap            Render text as a single truncated line instead of wrapping.
+  --ansi-mode MODE     ANSI text rendering mode for --text/--command/stdin text: auto (default), on, or off.
+  --strip-colors       Strip ANSI escape sequences from text before display.
+  --icon SF_SYMBOL     SF Symbol name; shown before text, or before the progress bar, or alone centered if nothing else is set
+  --font "FONT NAME"   Installed system font name used for text rendering (omitting --font resets to default)
+  --font-size POINTS   Base text size in points (> 0). Also acts as minimum size when text full-width scaling is enabled.
+  --fit-text           Scale text or table cells to fit available widget width and height. Text/icon layouts use the same 10pt inset as --padding fill and vertically center. Tables grow font until width or height binds; pair with --center-table to vertically center the scaled table.
+
+  Colors / theme:
+  --foreground COLOR   Text/icon color (alias: --fg). Accepts RRGGBB, #RRGGBB, rgb(r,g,b), or rgba(r,g,b,a). Comma-separated values use the first for text/icons and the full list as grouped sparkline series colors.
+  --text-color COLOR   Color for main widget text (--text) and table cell defaults; omit to use --foreground/theme.
+  --caption-color COLOR Color for chart/progress captions ([min/max], [n%]), --caption-text, side captions, and timestamps; omit to use --foreground/theme.
+  --title-color COLOR  Color for --title; omit to use --foreground/theme.
+  --background COLOR   Widget background color when followed by COLOR (alias: --bg). Accepts RRGGBB, #RRGGBB, rgb(r,g,b), or rgba(r,g,b,a).
+  --alpha A            Override alpha channel for --foreground/--background/--text-color/--caption-color/--title-color this update (0.0...1.0).
+  --bg-gradient-from C Background gradient start color. Accepts same formats as --fg/--bg.
+  --bg-gradient-to C   Background gradient end color. Accepts same formats as --fg/--bg.
+  --bg-gradient-start D
+                       Background gradient start direction (N/S/E/W/NW/NE/SW/SE). End point is opposite.
+  --theme MODE         system, light, or dark
+  --mode MODE          Alias for --theme (system, light, or dark)
+
+  Progress:
+  --progress N[,N...]  One 0-100 integer, or comma-separated integers for quad4.
+  --progress-format F  Progress style: bar (default), matrix, dots, stack, circle, watch, quadrant, quad4 (alias: quad-4), gradient (alias for gradient-horizontal), gradient-horizontal, or gradient-vertical.
+  --progress-layout L  Quad4 quadrant layout (for example: 1,2,3,4 or 1-2,3-4).
+  --gradient-from C    Gradient start color for gradient progress formats. Accepts same formats as --fg/--bg.
+  --gradient-to C      Gradient end color for gradient progress formats. Accepts same formats as --fg/--bg.
+  --gradient-width N   Gradient thickness in points (1-2048): width for vertical mode, height for horizontal mode.
+
+  Charts:
+  --chart VALUES       Chart series values separated by spaces/commas. Defaults to sparkline. Slash-separated groups for series/grouped bars (e.g. "0 1 5 2/1 2 5 3"). low-high pairs for rangebar. label:value[:color] for pie. Omit to clear. Max 128 points (newest); matrix up to 2048 cells.
+  --append VALUES      Append chart columns (same syntax as --chart, including slash-grouped and rangebar low-high) or text lines to the existing widget. Preserves settings not overridden. Incompatible with --chart/--text/--command/--table/--image.
+  --limit N            Keep the last N chart columns or text lines (stored). Persists on the target. 0 clears the soft limit (charts still hard-capped at 128 newest, matrix at 2048). Works with --chart/--text/--append, or alone to re-truncate existing data.
+  --chart-format MODE  sparkline (spark, bar), graph (line), series (lines, multiline), pie, waveform (wave), area, lollipop, strip (dot), radial, delta, threshold, smooth, sine, peak, neo, matrix, or rangebar (default: sparkline)
+  --chart-key PLACEMENT Legend placement for series/pie: auto, inline, left, bottom, external, or none (default: auto)
+  --chart-series-labels LIST Comma-separated legend labels for series charts (order matches slash groups). Example: CPU,Memory,Disk
+  --key-target NAME    Target widget for external legend key (--chart-key external). Use auto for {target}-key.
+  --chart-height N[%]  Chart height override. Use points (e.g. 50) or percent of available chart area (e.g. 80%). Default behavior is 100%.
+  --neo-characters SET Neo chart character set: katakana (default), ascii, or binary.
+  --base-zero          Force chart scaling baseline to 0 (instead of data minimum). Alias for --base 0.
+  --base N             Set chart scaling baseline to N (instead of data minimum).
+  --bar-radius N       Bar corner rounding percentage (0-100). For sparkline/spark/bar and rangebar. Requires --chart (or --sparkline for sparkline).
+  --chart-bar-style S  Bar/slice fill: solid (default) or glass (sparkline, waveform, matrix, rangebar, delta, pie, or circle progress).
+  --annotate           Show small value labels above chart points/bars
+  --label-y            Draw a left y-axis with five ticks along the chart value span
+  --caption            Show centered [min/max] caption below chart for this update
+  --caption-left TEXT  Bottom-left chart/progress footer (single line; requires --chart or --progress)
+  --caption-right TEXT Bottom-right chart/progress footer (single line; requires --chart or --progress)
+
+  Tables:
+  --table PATH|-        Table data source. Accepts .csv/.tsv/.json file path, or '-' to read from stdin.
+  --no-header          Render table without header row styling/semantics.
+  --grid MODE          Table line/striping mode: none (default), row/horizontal, column/vertical, both, zebra, zebra-row, zebra-column.
+  --table-layout MODE  Table column layout: auto (content-measured, default; leftover space after last column; use --center-table to split leftover space on both sides), fill (content-measured then stretched to widget width), or equal (uniform column widths).
+  --table-align LIST   Per-column table text alignment: left, center, or right (aliases l/c/r, leading/trailing, centre). Comma-separated; extra columns repeat the last value. Default left. A fresh --table without --table-align writes that default.
+  --center-table       With auto layout, center the hugged table in the widget instead of leaving leftover space after the last column. Horizontal rules span the table. Ignored for equal and fill. A fresh --table without --center-table writes the default (left-aligned block).
+  --zebra-opacity V    Zebra opacity scale. Decimal values are 0.0...1.0. Integer values are treated as percent 0...100. Default: 0.24.
+  --no-grid            Alias for --grid none.
+
+  Images / layout:
+  --image IMAGE_PATH   Absolute/relative image path or an http(s) image URL (not combinable with chart data)
+  --background-image IMAGE_PATH
+                       Full-bleed background behind text, icons, progress, charts, or tables (path or http(s) URL). Cannot be combined with --image.
+  --filter SPEC        Image filter(s) for --image or --background-image. Supports grayscale, sepia[:0-100], negative, pixelate[:1-200], blur[:0-100], alpha[:0-100]. Repeat --filter or pass comma-separated lists.
+  --full-width         Alias for --padding fill (kept for compatibility)
+  --padding N|fill     Padding in points (0-64), or `fill` for orientation-aware image fill/crop mode
+  --fullsize           Shortcut for --padding 0 (edge-to-edge content)
+
+  Titles / captions:
+  --title TEXT         Optional title at top of chart, text, image, or progress widgets (inside padding)
+  --title-alignment A  Title alignment: left, center, or right (default center when --title is set)
+  --caption-text TEXT  Custom footer text below widget content (replaces auto [min/max] or [n%]; implies --caption)
+  --timestamp          Show last-update time at the bottom (any widget type; uses --caption-color when set)
+
+  Actions / JSON / notify:
+  --json SOURCE        Load widget fields from structured JSON: inline JSON, '-' (stdin), file path, or http(s) URL. Other flags override JSON keys. Table keys include tableAlign and tableCenter.
+  --action-kind KIND   Widget tap/click action: open-url, open-app, run-shortcut, run-command, or refresh (alias: --tap-action)
+  --action-value VALUE Value for --action-kind: URL (also refresh endpoint), bundle identifier, Shortcut name, or shell command (alias: --tap-action-value)
+  --clear-action       Remove the persisted tap/click action for this target
+  --auto-update KIND   Enable Mac host auto-update: shortcut or image-url (off/false clears)
+  --auto-update-value VALUE  Shortcut name or http(s) image URL for --auto-update
+  --auto-update-interval SECS  Seconds between auto-updates (minimum 60)
+  --clear-auto-update  Remove the persisted auto-update recipe for this target
+  --notify             Persist notify-on-change for this target (local notification when display content changes)
+  --no-notify          Turn off persisted notify-on-change for this target
+  --notify-once        Notify only for this update if content changed (does not change persisted setting)
+
+  Diagnostics:
+  --verbose            Print debug/status/stderr diagnostics (image copy, defer/fallback hints, empty --command notices) plus manual test URL
+  --background         When used without a color value, do not launch TerminalWidget or open its refresh URL.
+  --background-mode    Unambiguous alias for bare --background mode.
+  --strict-local-open  Fail if local `open` handoff fails (URL scheme/app launch diagnostics)
+  --help               Show this help
+
+Notes:
+  - If both --text and --command are supplied, --command output wins.
+  - --text - reads text from stdin.
+  - --chart - reads chart values from stdin.
+  - --append - reads append values from stdin.
+  - --table - reads table data from stdin. Detection order: leading '{'/'[' => JSON, then tab => TSV, then comma => CSV.
+  - Table file paths are parsed by extension: .json, .tsv, .csv.
+  - Sandboxed CLI (bundled in Terminal Widget.app) may not open arbitrary PATH outside allowed scopes; use `cat path/to/table.csv | terminal-widget --table - …` instead.
+  - --zebra-opacity treats values with a decimal point as a 0.0...1.0 scale; values without a decimal point are parsed as percentages (0...100).
+  - --json reads a full widget document; combine with explicit flags so CLI options win over JSON keys.
+  - JSON may include a "buttons" array of {label, color, action-type, action-value} launcher buttons (max 12). Each button may include an optional "icon" (SF Symbol name or :emoji:), plus optional border-color, border-width, border-radius. Use "buttons": [] to clear buttons while preserving other content.
+  - Optional "button-columns": "smart"|"auto"|1|2|3 forces footer grid columns (smart/auto is default; omit to leave previous).
+  - Optional root "button-border" / "button-border-color" / "button-border-width" / "button-border-radius" set defaults for all buttons; per-button "border" / "border-color" / "border-width" / "border-radius" override.
+  - If neither --text - nor --chart - nor --table - nor --json - is used, piped stdin defaults to text when --text is omitted.
+  - Legacy aliases still accepted for compatibility: --sparkline/--spark, --graph, --waveform, --matrix.
+  - Omitting both --text and --command clears the widget text line (e.g. `terminal-widget --progress 50` only updates progress).
+  - --command runs with /bin/sh -c plus Homebrew paths for predictable sandbox-safe behavior.
+  - --filter requires --image or --background-image. Chain filters by repeating --filter and/or using comma-separated lists (e.g. --filter sepia:70 --filter blur:20 or --filter "sepia:70,blur:20").
+  - --image cannot be combined with chart data (--chart or legacy chart flags).
+  - --background-image cannot be combined with --image.
+  - --background-image can be combined with charts, text, progress, and tables and is always full-bleed.
+  - With --background-image, --filter alpha:40 fades the image so --bg shows through.
+  - Icon-only: pass --icon with no --text, --command, --image, --progress, --sparkline, --graph, --waveform, or --matrix to show a centered symbol.
+  - Omit --foreground/--background/--text-color/--caption-color/--title-color on a later update to reset those colors to theme defaults.
+  - With --image, --padding fill/--full-width keeps image fill mode: portrait images fill width and crop height; landscape/panorama images fill height and crop width.
+  - Without --image, --padding fill/--full-width enables full-width text scaling for text-only or text+icon layouts, with a built-in 10pt inset.
+  - --fit-text enables text fitting for text-only or text+icon layouts without changing image fill mode. Scaling uses a 10pt inset (same as --padding fill) and centers the fitted block. For tables, grows cell fonts until width or height binds; combine with --center-table to center vertically. Skipped when text or any table cell contains markdown links.
+  - Each command writes a fresh payload for the target; unspecified display options are cleared, while notify/action settings persist until changed.
+  - Updates the App Group JSON + prefs, then notifies running app instances via SIGUSR1 and terminalwidget:///update?sync=1&target=...
+  - Bare --background/--background-mode is intended for prompt hooks: it avoids all LaunchServices app/URL handoffs that can steal focus.
