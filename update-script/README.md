@@ -18,8 +18,9 @@ and then tells you exactly which packages changed.
   ·  Homebrew cleanup        waiting
   ⠹  macOS updates     00:24  Scanning for updates…
   —  App Store apps          mas is not installed
+  ✔  zsh plugins       00:02  1 changed
 
-  ███████████████░░░░░░░░░░░░░  2/10
+  ███████████████░░░░░░░░░░░░░  3/11
 ```
 
 At the end you get the change list:
@@ -55,6 +56,7 @@ At the end you get the change list:
 | Homebrew cleanup | `brew cleanup --prune=all` | brew |
 | macOS updates | `softwareupdate --install --all` | macos |
 | App Store apps | `mas upgrade` | mas |
+| zsh plugins | `git pull --ff-only` in each git clone in `~/.zsh/plugins` | zsh |
 
 A job that needs a program that you do not have is not an error. The board
 shows it as *missing* and the run continues. You therefore do not need `mas`
@@ -113,6 +115,7 @@ up --only macos    # install the macOS updates only
 | `UP_BACKUP_DIR` | `~/.config` | Where the backup jobs write. |
 | `NVM_DIR` | `~/.nvm` | Where nvm keeps the node versions. |
 | `SKILL_LOCK` | `~/.agents/.skill-lock.json` | The lock file of the skills. |
+| `ZSH_PLUGIN_DIR` | `~/.zsh/plugins` | Where the zsh plugins are cloned. |
 
 ## The macOS updates and sudo
 
@@ -190,6 +193,7 @@ lists. The version source is:
 | Node (nvm) | The directories in `~/.nvm/versions/node`. The version column holds the npm version inside that node. |
 | Homebrew apps | `brew list --versions` |
 | App Store apps | `mas list` |
+| zsh plugins | The commit of each git clone in `~/.zsh/plugins` |
 
 This also works for `npm update -g`, which only reports *"changed 3 packages"*
 and never says which ones.
@@ -212,8 +216,8 @@ become two screen lines and break the redraw.
 
 The layout follows the window height. The full board needs `jobs + 5` rows.
 With fewer rows the script drops the blank lines. With fewer than `jobs + 3`
-rows it shows one status line only. The ten default jobs therefore give a full
-board at 15 rows, a compact board at 13, and one line at 12.
+rows it shows one status line only. The eleven default jobs therefore give a
+full board at 16 rows, a compact board at 14, and one line at 13.
 
 Without a terminal — in `cron`, or through a pipe — the script prints plain
 lines instead of the board.

@@ -57,6 +57,9 @@ NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 # The backup jobs write their package lists below this directory.
 BACKUP_DIR="${UP_BACKUP_DIR:-$HOME/.config}"
 
+# Each zsh plugin is a git clone below this directory.
+ZSH_PLUGIN_DIR="${ZSH_PLUGIN_DIR:-$HOME/.zsh/plugins}"
+
 snap_skills() {
   [ -r "$SKILL_LOCK" ] || return 0
   jq -r '.skills // {} | to_entries[]
@@ -86,6 +89,21 @@ snap_node() {
     [ -r "$pkg" ] && ver=$(jq -r '.version // "?"' "$pkg" 2>/dev/null)
     [ -n "$ver" ] || ver="?"
     printf '%s npm %s\n' "${v##*/}" "$ver"
+  done | sort
+}
+
+# One line for each zsh plugin. The version column holds the first 7
+# characters of the commit hash. git can print a longer short hash, and the
+# change list shows only the name for two 7-character hashes.
+snap_zsh_plugins() {
+  local d hash
+  [ -d "$ZSH_PLUGIN_DIR" ] || return 0
+  for d in "$ZSH_PLUGIN_DIR"/*/; do
+    [ -d "$d.git" ] || continue
+    d="${d%/}"
+    hash=$(git -C "$d" rev-parse HEAD 2>/dev/null | cut -c1-7)
+    [ -n "$hash" ] || hash="?"
+    printf '%s %s\n' "${d##*/}" "$hash"
   done | sort
 }
 
@@ -165,6 +183,22 @@ up_npm_backup() {
   npm list --global --depth=0 --json > "$out" || [ -s "$out" ]
 }
 
+# Pull each zsh plugin. A failed plugin does not stop the other plugins, but
+# the job fails at the end.
+up_zsh_plugins() {
+  local d rc=0
+  [ -d "$ZSH_PLUGIN_DIR" ] || { printf 'No directory %s\n' "$ZSH_PLUGIN_DIR"; return 0; }
+  # The job gets no keyboard input. git must fail, not wait for a login.
+  export GIT_TERMINAL_PROMPT=0
+  for d in "$ZSH_PLUGIN_DIR"/*/; do
+    [ -d "$d.git" ] || continue
+    d="${d%/}"
+    printf '%s\n' "${d##*/}"
+    git -C "$d" pull --ff-only || rc=1
+  done
+  return $rc
+}
+
 register_jobs() {
   add_job "Claude skills"    node  "npx"  "npx --yes skills update -g -y" snap_skills
   add_job "npm globals"      node  "npm"  "npm update -g"                 snap_npm_globals
@@ -176,6 +210,7 @@ register_jobs() {
   add_job "Homebrew cleanup" brew  "brew" "brew cleanup --prune=all"      ""
   add_job "macOS updates"    macos "softwareupdate" "up_macos_update"     ""
   add_job "App Store apps"   mas   "mas"  "mas upgrade"                   snap_mas
+  add_job "zsh plugins"      zsh   "git"  "up_zsh_plugins"                snap_zsh_plugins
 }
 
 # --------------------------------------------------------------------------
