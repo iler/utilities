@@ -8,7 +8,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/ilari/projects/widgets/bin/widget.sh</string>
+    <string>/Users/ilari/projects/utilities/widgets/bin/widget.sh</string>
   </array>
 
   <!-- launchd gives a bare PATH, so every tool is listed here.
