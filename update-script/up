@@ -77,6 +77,12 @@ snap_brew() {
   brew list --versions 2>/dev/null | sort
 }
 
+snap_nono_packs() {
+  nono list --installed --json 2>/dev/null \
+    | jq -r '.packages // {} | to_entries[]
+             | "\(.key) \(.value.version // "?")"' 2>/dev/null | sort
+}
+
 # One line for each installed node version. The version column holds the npm
 # version inside that node.
 snap_node() {
@@ -206,6 +212,7 @@ register_jobs() {
   add_job "Node (nvm)"       node  "$NVM_DIR/nvm.sh" "up_node_update"     snap_node
   add_job "Homebrew index"   brew  "brew" "brew update"                   ""
   add_job "Homebrew apps"    brew  "brew" "brew upgrade"                  snap_brew
+  add_job "nono packs"       brew  "nono" "nono update"                   snap_nono_packs
   add_job "Homebrew backup"  brew  "brew" "up_brew_backup"                ""
   add_job "Homebrew cleanup" brew  "brew" "brew cleanup --prune=all"      ""
   add_job "macOS updates"    macos "softwareupdate" "up_macos_update"     ""
