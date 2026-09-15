@@ -14,13 +14,14 @@ and then tells you exactly which packages changed.
   ·  Node (nvm)               waiting
   ✔  Homebrew index    00:06  Already up-to-date.
   ⠹  Homebrew apps     00:18  working
+  ·  nono packs               waiting
   ·  Homebrew backup         waiting
   ·  Homebrew cleanup        waiting
   ⠹  macOS updates     00:24  Scanning for updates…
   —  App Store apps          mas is not installed
   ✔  zsh plugins       00:02  1 changed
 
-  ███████████████░░░░░░░░░░░░░  3/11
+  ███████████████░░░░░░░░░░░░░  3/12
 ```
 
 At the end you get the change list:
@@ -52,6 +53,7 @@ At the end you get the change list:
 | Node (nvm) | `nvm install --lts --latest-npm`, with `--reinstall-packages-from` for a new node | node |
 | Homebrew index | `brew update` | brew |
 | Homebrew apps | `brew upgrade` | brew |
+| nono packs | `nono update` | brew |
 | Homebrew backup | `brew bundle dump` to a Brewfile | brew |
 | Homebrew cleanup | `brew cleanup --prune=all` | brew |
 | macOS updates | `softwareupdate --install --all` | macos |
@@ -159,6 +161,11 @@ npm processes must not write to the global directory together.
 `mas` has its own lane. A failed `softwareupdate` must not stop the App Store
 updates.
 
+The nono packs job runs in the `brew` lane, after `brew upgrade`. Homebrew
+installs the `nono` program. A new pack can need the new program, and the
+program must not change while the packs update. `nono update` skips pinned
+packs.
+
 If a job fails, the script skips the remaining jobs of that lane. `brew upgrade`
 therefore never runs after a failed `brew update`. This is the same rule as
 `brew update && brew upgrade`.
@@ -192,6 +199,7 @@ lists. The version source is:
 | npm globals | `npm ls -g --depth=0 --json` |
 | Node (nvm) | The directories in `~/.nvm/versions/node`. The version column holds the npm version inside that node. |
 | Homebrew apps | `brew list --versions` |
+| nono packs | `nono list --installed --json` |
 | App Store apps | `mas list` |
 | zsh plugins | The commit of each git clone in `~/.zsh/plugins` |
 
@@ -216,8 +224,8 @@ become two screen lines and break the redraw.
 
 The layout follows the window height. The full board needs `jobs + 5` rows.
 With fewer rows the script drops the blank lines. With fewer than `jobs + 3`
-rows it shows one status line only. The eleven default jobs therefore give a
-full board at 16 rows, a compact board at 14, and one line at 13.
+rows it shows one status line only. The twelve default jobs therefore give a
+full board at 17 rows, a compact board at 15, and one line at 14.
 
 Without a terminal — in `cron`, or through a pipe — the script prints plain
 lines instead of the board.
