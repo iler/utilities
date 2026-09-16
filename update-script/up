@@ -637,6 +637,25 @@ print_summary() {
   return 0
 }
 
+# Copy the changed dotfiles into the chezmoi source directory. This runs after
+# every job, because the backup jobs write the Brewfile and the npm list in
+# other lanes. chezmoi never overwrites a template, so a secret in a template
+# cannot travel back into the repository.
+sync_dotfiles() {
+  local src
+  have_bin chezmoi || return 0
+  src=$(chezmoi source-path 2>/dev/null) || return 0
+  [ -d "$src" ] || return 0
+  if chezmoi re-add >"$RUNDIR/dotfiles.log" 2>&1; then
+    printf '\n  %sDotfiles: chezmoi re-add is done. Check %s and commit.%s\n' \
+      "$C_GREY" "$src" "$C_RESET"
+  else
+    printf '\n  %sDotfiles: chezmoi re-add failed. See %s%s\n' \
+      "$C_YELLOW" "$RUNDIR/dotfiles.log" "$C_RESET"
+  fi
+  return 0
+}
+
 prune_logs() {
   local old
   old=$(ls -1dt "$LOG_ROOT"/*/ 2>/dev/null | tail -n +$(( KEEP_RUNS + 1 )))
@@ -812,6 +831,7 @@ main() {
   if [ ! -t 1 ] || [ "$OPT_VERBOSE" -eq 1 ]; then
     run_plain
     local rc=$?
+    sync_dotfiles
     print_changes
     printf '\n  Logs: %s\n' "$RUNDIR"
     exit $rc
@@ -851,6 +871,7 @@ main() {
   draw_frame
 
   printf '\033[?7h\033[?25h'; WRAP_OFF=0; CURSOR_HIDDEN=0
+  sync_dotfiles
   print_summary
   exit $?
 }

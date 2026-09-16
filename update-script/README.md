@@ -255,6 +255,21 @@ node job, which reads `~/.nvm/nvm.sh`.
 The *command* can be a shell function of the script. Use one when the job needs
 more than one line. `up_node_update` and `up_brew_backup` are examples.
 
+## Dotfiles
+
+If you have [chezmoi](https://chezmoi.io) and a source directory, `up` runs
+`chezmoi re-add` after every job. It copies the changed dotfiles, the Brewfile
+and the npm package list into your dotfiles repository. It never commits, so
+you can read the diff first.
+
+This step is not a job, because a job would run at the same time as the backup
+jobs of the other lanes, and then it would copy the old files.
+
+chezmoi never overwrites a template, so a secret that comes from a password
+manager cannot travel back into the repository.
+
+Without chezmoi the step does nothing.
+
 ## Logs
 
 Each job writes its own log file to `~/.local/state/update-script/<timestamp>/`.
