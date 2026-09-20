@@ -90,3 +90,86 @@ not pass, so every display flag goes on every call.
 
 The full CLI help is saved at `docs/terminal-widget-help.txt`. The agent sandbox
 cannot run the binary, so that file is the only reference available in-session.
+
+---
+
+# Design: token-usage widget
+
+## Destination
+
+A second widget on the desktop. It shows token usage and spend from Token
+Meter: today, this month, and the current session.
+
+## Shape
+
+Its own launchd job runs every 5 minutes. One reader calls the local Token
+Meter server, one renderer builds three lines, and the push goes to the
+Target name `token-usage`. The code is bash with jq, same as the limits
+widget.
+
+## Source
+
+`GET http://127.0.0.1:8722/state`. No auth. Served from the server's cache,
+so it answers in about 30 ms. One call carries everything:
+
+- `xsession.daily` -> today's tokens and cost, keyed by local date.
+- `xsession.budget` -> month spend, budget target, percent, projection.
+- top level -> current session: provider, model, tokens, cost, turns,
+  context percent, ended, idle seconds.
+
+The local date comes from `date +%F` in the reader. jq `strftime` is UTC,
+and the daily rows use the server's local date.
+
+### Rejected sources
+
+- `GET /menubar`: compact, but it has no daily token history and no token
+  count for today.
+- `GET /spend/logs` and `GET /builder-recap`: they rebuild cross-session
+  state per request. Measured over 5 s, so they time out.
+- The Token Meter MCP server: a stdio JSON-RPC handshake from bash is
+  heavier than one curl.
+
+## Display rules
+
+- Three fixed lines: `Today`, the month label, `Session`.
+- An unavailable value renders as `n/a`, never as zero. Token Meter marks
+  availability per metric, and the reader carries those flags.
+- Budget percent and context percent use the same thresholds as the limits
+  widget: 70% warns, 90% is critical. They are only shown when they mean
+  something: a budget percent needs a configured budget, a context percent
+  needs a known context window.
+- An ended session is marked `ended`. An idle session over 15 minutes shows
+  its idle time. Both in grey.
+- An approximate session cost gets a `~` prefix.
+- When the reading is not ok, one grey line shows why: `token-meter down`
+  or `token-meter bad data`.
+
+## Failure taxonomy
+
+- Empty curl response -> `down`. The server is not running.
+- jq select fails -> `bad data`. The payload shape changed. The Token Meter
+  GET API is dashboard-internal and not versioned, so an update can break
+  it. `bad data` on the widget is the alarm.
+
+## Push
+
+Same flags as the limits widget, for the same reasons:
+`--background-mode`, `--font Menlo`, `--no-wrap`, `--timestamp`,
+`--ansi-mode on`. Target name `token-usage`, overridable with `TW_TARGET`.
+Knobs: `TOKEN_USAGE_DRY`, `TOKEN_USAGE_WARN`, `TOKEN_USAGE_CRIT`,
+`TOKEN_USAGE_IDLE`, `TOKEN_USAGE_COLOR`, `TOKEN_METER_URL`.
+
+## Findings
+
+- **Token Meter is installed as two LaunchAgents** (`com.token-meter.server`
+  and `com.token-meter.menubar`), so the API is up at login. The widget job
+  still fails soft when it is not.
+- **omp sessions record cost ~$0.** Token Meter uses the cost that the
+  runtime wrote to its own log and infers no price. Token counts are still
+  correct, so the token-usage widget stays useful for omp.
+- **The budget is unconfigured by default.** The month line then shows
+  spend only. Configure a monthly budget in Token Meter settings to get the
+  percent and the projection.
+- **Do not read `provider_quotas` from Token Meter.** It polls the Claude
+  OAuth usage API, which is the source this repo already rejected for the
+  limits widget. The limits widget keeps its own readers.

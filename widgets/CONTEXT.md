@@ -1,6 +1,6 @@
 # Context
 
-Glossary for the terminal widget that shows AI coding-plan limits.
+Glossary for the terminal widgets that show AI plan limits and token usage.
 
 ## Provider
 
@@ -54,3 +54,17 @@ The `terminal-widget` CLI only reaches widgets that carry the same name.
 The way data gets to the widget. TerminalWidget never runs this project's code.
 A scheduled job runs the code, and the code pushes a payload to a Target name.
 This is the opposite of a status line, which is pulled.
+
+## Token usage
+
+How many tokens and how much money sessions consumed. Token usage is not
+utilization. Utilization is a percent of a plan limit. Token usage is an
+absolute count, computed from local session logs.
+
+## Token Meter
+
+A local server from Splunk that reads the session logs of Claude, Codex, and
+other runtimes. It computes token usage, cost, and budget state. The
+token-usage widget reads its HTTP API on 127.0.0.1:8722 and pushes the
+result to its own Target name. Token Meter never talks to TerminalWidget
+itself.
