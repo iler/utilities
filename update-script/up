@@ -57,6 +57,10 @@ NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 # The backup jobs write their package lists below this directory.
 BACKUP_DIR="${UP_BACKUP_DIR:-$HOME/.config}"
 
+# The uipro assistant types to update. "claude" writes to ~/.claude/skills.
+# "universal" writes to ~/.agents/skills, which Codex and omp read.
+UIPRO_AI="${UIPRO_AI:-claude universal}"
+
 # Each zsh plugin is a git clone below this directory.
 ZSH_PLUGIN_DIR="${ZSH_PLUGIN_DIR:-$HOME/.zsh/plugins}"
 
@@ -71,6 +75,15 @@ snap_npm_globals() {
   npm ls -g --depth=0 --json 2>/dev/null \
     | jq -r '.dependencies // {} | to_entries[]
              | "\(.key) \(.value.version // "?")"' 2>/dev/null | sort
+}
+
+# uipro makes the skill files from its own package. The CLI version is
+# therefore the version of the skills.
+snap_uipro() {
+  local ver
+  ver=$(uipro --version 2>/dev/null)
+  [ -n "$ver" ] || return 0
+  printf 'ui-ux-pro-max %s\n' "$ver"
 }
 
 snap_brew() {
@@ -159,6 +172,21 @@ up_node_update() {
   fi
 }
 
+# Update the global UI/UX Pro Max skills for each type in UIPRO_AI. Without
+# --ai, uipro asks for the assistant, and a job gets no keyboard input.
+up_uipro_update() {
+  local ai before after
+  # The shell must split $UIPRO_AI into separate words here.
+  for ai in $UIPRO_AI; do
+    before=$(uipro --version 2>/dev/null)
+    uipro update --global --ai "$ai" || return 1
+    # A new CLI does not refresh the skill files. Run the update again with
+    # the new CLI to do that.
+    after=$(uipro --version 2>/dev/null)
+    [ "$before" = "$after" ] || uipro update --global --ai "$ai" || return 1
+  done
+}
+
 # Install the macOS system updates.
 up_macos_update() {
   # Most updates need root. A job gets no keyboard input, so use sudo only
@@ -208,6 +236,7 @@ up_zsh_plugins() {
 register_jobs() {
   add_job "Claude skills"    node  "npx"  "npx --yes skills update -g -y" snap_skills
   add_job "npm globals"      node  "npm"  "npm update -g"                 snap_npm_globals
+  add_job "UI/UX Pro Max"    node  "uipro" "up_uipro_update"              snap_uipro
   add_job "npm backup"       node  "npm"  "up_npm_backup"                 ""
   add_job "Node (nvm)"       node  "$NVM_DIR/nvm.sh" "up_node_update"     snap_node
   add_job "Homebrew index"   brew  "brew" "brew update"                   ""

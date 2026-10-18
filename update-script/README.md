@@ -10,6 +10,7 @@ and then tells you exactly which packages changed.
 
   ✔  Claude skills     00:04  2 changed
   ⠹  npm globals       00:24  working
+  ·  UI/UX Pro Max            waiting
   ·  npm backup               waiting
   ·  Node (nvm)               waiting
   ✔  Homebrew index    00:06  Already up-to-date.
@@ -21,7 +22,7 @@ and then tells you exactly which packages changed.
   —  App Store apps          mas is not installed
   ✔  zsh plugins       00:02  1 changed
 
-  ███████████████░░░░░░░░░░░░░  3/12
+  ███████████████░░░░░░░░░░░░░  3/13
 ```
 
 At the end you get the change list:
@@ -49,6 +50,7 @@ At the end you get the change list:
 | --- | --- | --- |
 | Claude skills | `npx --yes skills update -g -y` | node |
 | npm globals | `npm update -g` | node |
+| UI/UX Pro Max | `uipro update --global --ai <type>` for each type in `UIPRO_AI` | node |
 | npm backup | `npm list --global --depth=0 --json` to a file | node |
 | Node (nvm) | `nvm install --lts --latest-npm`, with `--reinstall-packages-from` for a new node | node |
 | Homebrew index | `brew update` | brew |
@@ -166,6 +168,21 @@ installs the `nono` program. A new pack can need the new program, and the
 program must not change while the packs update. `nono update` skips pinned
 packs.
 
+The UI/UX Pro Max job runs in the `node` lane, after `npm update -g`. The
+`uipro` program is a global npm package, and a new CLI installs itself with
+`npm install -g`. When the CLI changes, `uipro update` does not refresh the
+skill files. The job then runs the update a second time with the new CLI.
+
+Without `--ai`, `uipro` asks for the assistant. The job therefore runs one
+update for each type in `UIPRO_AI`. The default is `claude universal`:
+
+| Type | Directory | Used by |
+| --- | --- | --- |
+| `claude` | `~/.claude/skills` | Claude Code |
+| `universal` | `~/.agents/skills` | Codex, omp |
+
+Set `UIPRO_AI` to change the list, for example `UIPRO_AI=universal up`.
+
 If a job fails, the script skips the remaining jobs of that lane. `brew upgrade`
 therefore never runs after a failed `brew update`. This is the same rule as
 `brew update && brew upgrade`.
@@ -197,6 +214,7 @@ lists. The version source is:
 | --- | --- |
 | Claude skills | `skillFolderHash` in `~/.agents/.skill-lock.json` |
 | npm globals | `npm ls -g --depth=0 --json` |
+| UI/UX Pro Max | `uipro --version`. uipro makes the skill files from its own package. |
 | Node (nvm) | The directories in `~/.nvm/versions/node`. The version column holds the npm version inside that node. |
 | Homebrew apps | `brew list --versions` |
 | nono packs | `nono list --installed --json` |
@@ -224,8 +242,8 @@ become two screen lines and break the redraw.
 
 The layout follows the window height. The full board needs `jobs + 5` rows.
 With fewer rows the script drops the blank lines. With fewer than `jobs + 3`
-rows it shows one status line only. The twelve default jobs therefore give a
-full board at 17 rows, a compact board at 15, and one line at 14.
+rows it shows one status line only. The thirteen default jobs therefore give a
+full board at 18 rows, a compact board at 16, and one line at 15.
 
 Without a terminal — in `cron`, or through a pipe — the script prints plain
 lines instead of the board.
