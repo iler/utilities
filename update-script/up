@@ -8,6 +8,7 @@
 #
 # The script needs bash 3.2 or later. It needs jq for the change list of the
 # skills and the npm globals. Without jq those two lists stay empty.
+# The node job also needs jq to copy missing global packages.
 
 set -u
 set -o pipefail
@@ -149,8 +150,59 @@ snap_mas() {
 # Job commands that need more than one line.
 # --------------------------------------------------------------------------
 
-# Install the newest LTS node, with the newest npm in it. Copy the global
-# packages of the node that you use now into a new node.
+# Read the global packages with the node that owns them.
+up_node_packages() {
+  local packages
+  # npm can report a bad dependency tree and still print a valid package list.
+  # Accept that list, but fail if there is no usable JSON.
+  packages=$(PATH="$NVM_DIR/versions/node/$1/bin:$PATH" npm ls -g --depth=0 --json 2>/dev/null) \
+    || [ -n "$packages" ] || return 1
+  printf '%s\n' "$packages" | jq -e .
+}
+
+# Copy missing packages from the current node and the nearest older node.
+up_node_sync_globals() {
+  local target="$1" from="$2" previous dir source installed packages package
+  local missing=()
+  if ! command -v jq >/dev/null 2>&1; then
+    printf 'Skip the global package copy: jq is not installed.\n'
+    return 0
+  fi
+
+  previous=$(
+    for dir in "$NVM_DIR/versions/node"/v*; do
+      [ -d "$dir" ] || continue
+      printf '%s\n' "${dir##*/}"
+    done | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+      | sort -t. -k1.2,1n -k2,2n -k3,3n \
+      | awk -v target="$target" '$0 == target { print previous } { previous = $0 }'
+  ) || return 1
+  [ "$previous" != "$from" ] || previous=""
+  installed=$(up_node_packages "$target" | jq -r '.dependencies // {} | keys[]') || return 1
+  for source in "$from" "$previous"; do
+    [ -n "$source" ] && [ "$source" != "$target" ] || continue
+    packages=$(up_node_packages "$source" | jq -r '
+      .dependencies // {} | to_entries[]
+      | select(.key != "npm" and .key != "corepack")
+      | select(.value.link != true)
+      | select((.value.resolved // "" | test("^(file:|link:)")) | not)
+      | select((.value.version // "" | test("^(file:|link:)")) | not)
+      | .key') || return 1
+    while IFS= read -r package; do
+      [ -n "$package" ] || continue
+      case $'\n'"$installed"$'\n' in
+        *$'\n'"$package"$'\n'*) continue ;;
+      esac
+      missing[${#missing[@]}]="$package"
+      installed="$installed"$'\n'"$package"
+    done <<< "$packages"
+  done
+  [ "${#missing[@]}" -gt 0 ] || return 0
+  printf 'Install missing global packages: %s\n' "${missing[*]}"
+  PATH="$NVM_DIR/versions/node/$target/bin:$PATH" npm install -g "${missing[@]}"
+}
+
+# Install the newest LTS node and npm. Then copy missing global packages.
 up_node_update() {
   local from target
   # nvm.sh reads unset variables. It therefore needs "set +u". The job runs in
@@ -159,17 +211,20 @@ up_node_update() {
   export NVM_DIR
   . "$NVM_DIR/nvm.sh" || return 1
 
-  # nvm fails when the source node is the same as the new node. Copy the
-  # packages only when the newest LTS is not installed yet.
+  # nvm fails when the source node is the same as the new node. Use its copy
+  # option only when the newest LTS is not installed yet.
   from=$(nvm current)
   target=$(nvm version-remote --lts)
   case "$from" in v*) ;; *) from="" ;; esac
   case "$target" in v*) ;; *) target="" ;; esac
   if [ -n "$from" ] && [ -n "$target" ] && [ "$(nvm version "$target")" = "N/A" ]; then
-    nvm install --lts --latest-npm --reinstall-packages-from="$from"
+    nvm install --lts --latest-npm --reinstall-packages-from="$from" || return 1
   else
-    nvm install --lts --latest-npm
+    nvm install --lts --latest-npm || return 1
   fi
+  target=$(nvm version "${target:-lts/*}") || return 1
+  case "$target" in v*) ;; *) return 1 ;; esac
+  up_node_sync_globals "$target" "$from"
 }
 
 # Update the global UI/UX Pro Max skills for each type in UIPRO_AI. Without

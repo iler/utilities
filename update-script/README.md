@@ -52,7 +52,7 @@ At the end you get the change list:
 | npm globals | `npm update -g` | node |
 | UI/UX Pro Max | `uipro update --global --ai <type>` for each type in `UIPRO_AI` | node |
 | npm backup | `npm list --global --depth=0 --json` to a file | node |
-| Node (nvm) | `nvm install --lts --latest-npm`, with `--reinstall-packages-from` for a new node | node |
+| Node (nvm) | `nvm install --lts --latest-npm`, then `npm install -g` for missing global packages | node |
 | Homebrew index | `brew update` | brew |
 | Homebrew apps | `brew upgrade` | brew |
 | nono packs | `nono update` | brew |
@@ -85,6 +85,8 @@ alias up=~/projects/up/up
 - bash 3.2 or later. This is the version that macOS supplies.
 - `jq`, for the change list of the skills, the npm globals and the node
   versions. Without `jq` those lists stay empty. The updates still run.
+  The node job also needs `jq` to copy missing global packages. Without `jq`,
+  it skips this copy and prints a message.
 
 The script has no other dependencies. This is on purpose: an updater must not
 depend on the packages that it updates.
@@ -193,9 +195,19 @@ must not happen while `npm update -g` runs. The last place also protects the
 other jobs: a failed download of a new node version then loses nothing.
 
 A new node version starts with no global packages. When the newest LTS is not
-installed yet, the node job therefore copies the global packages of the node
-that you use now into the new node. nvm fails if the two versions are the same,
-so the job does not copy when the newest LTS is already installed.
+installed yet, the node job uses `--reinstall-packages-from` to copy packages
+from the node that you use now.
+
+After each successful node install command, the job checks for missing global
+packages. This check also runs when the newest LTS is already installed. It
+reads packages from the node that you used before the job and from the newest
+installed node version that is older than the target. It does not read all old
+versions. It skips a source that is the target and reads each source only once.
+
+The job installs only package names that are missing from the target. It uses
+one `npm install -g` command under the target node. It installs by name, so npm
+gets the latest package versions. It skips `npm`, `corepack`, and linked local
+packages. If this check or install fails, the node job fails.
 
 ### The change list
 
