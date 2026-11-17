@@ -379,11 +379,21 @@ job_elapsed() {
 }
 
 # Print the last useful output line of a job.
+# A spinner can redraw its line with "go to column 1" and "erase" codes and
+# no line break. Treat these codes as line breaks, or all spinner frames join
+# into one very long line.
+# Keep only printable ASCII. The board counts one column for each character.
+# A wide character or a UTF-8 sequence that "tail -c" cut makes that count
+# wrong, and the board then moves down on each redraw.
 tail_line() {
   local f="$RUNDIR/$1.log"
   [ -s "$f" ] || return 0
-  tail -c 4000 "$f" | tr '\r' '\n' | strip_ansi \
-    | grep -v '^[[:space:]]*$' | tail -n 1
+  tail -c 4000 "$f" \
+    | LC_ALL=C sed -E $'s/\x1b\\[[0-9;]*[GJK]/\r/g' \
+    | LC_ALL=C tr '\r' '\n' | strip_ansi \
+    | LC_ALL=C tr -cd '\040-\176\n' \
+    | LC_ALL=C sed 's/^[[:space:]]*//' \
+    | LC_ALL=C grep -v '^$' | tail -n 1
 }
 
 # --------------------------------------------------------------------------
@@ -441,7 +451,9 @@ record_changes() {
       printf 'already up to date\n' > "$RUNDIR/$i.last"
     fi
   else
-    tail_line "$i" > "$RUNDIR/$i.last"
+    # Without snapshots the last log line is often a hint or a progress
+    # message, not a result. The full output stays in the log.
+    : > "$RUNDIR/$i.last"
   fi
   return 0
 }
