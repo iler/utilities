@@ -29,17 +29,22 @@ OPT_ONLY=""
 # --------------------------------------------------------------------------
 # Job list. Add a line here to add a job.
 #   add_job <name> <lane> <necessary program> <command> [snapshot function]
+#           [note function]
 #
 # The snapshot function prints one line for each installed item:
 #   <name> <version>
 # The script runs it before and after the job. It then compares the two lists
 # and reports the changes. Leave it empty if the job installs nothing.
 #
+# The note function reads the log of the job on standard input and prints a
+# short result for the board. The script uses it only for a job without a
+# snapshot function. Without a note function such a job shows no note.
+#
 # Jobs in the same lane run in sequence. Different lanes run at the same time.
 # Put the command in single quotes if it contains a dollar sign. The shell
 # expands a double-quoted string too early.
 # --------------------------------------------------------------------------
-TASK_NAME=(); TASK_LANE=(); TASK_BIN=(); TASK_CMD=(); TASK_SNAP=()
+TASK_NAME=(); TASK_LANE=(); TASK_BIN=(); TASK_CMD=(); TASK_SNAP=(); TASK_NOTE=()
 
 add_job() {
   TASK_NAME[${#TASK_NAME[@]}]="$1"
@@ -47,6 +52,7 @@ add_job() {
   TASK_BIN[${#TASK_BIN[@]}]="$3"
   TASK_CMD[${#TASK_CMD[@]}]="$4"
   TASK_SNAP[${#TASK_SNAP[@]}]="${5:-}"
+  TASK_NOTE[${#TASK_NOTE[@]}]="${6:-}"
 }
 
 # The skills tool keeps a hash of each installed skill in this file.
@@ -253,6 +259,12 @@ up_macos_update() {
   fi
 }
 
+# Show how much disk space brew cleanup freed. Homebrew prints:
+#   ==> This operation has freed approximately 599.7MB of disk space.
+note_brew_cleanup() {
+  LC_ALL=C sed -n 's/.*freed approximately \([^ ]*\) of disk space.*/\1 freed/p' | tail -n 1
+}
+
 # Write a Brewfile with the taps, the formulae, the casks and the App Store
 # apps. Homebrew writes the description of each item itself.
 up_brew_backup() {
@@ -298,7 +310,7 @@ register_jobs() {
   add_job "Homebrew apps"    brew  "brew" "brew upgrade"                  snap_brew
   add_job "nono packs"       brew  "nono" "nono update"                   snap_nono_packs
   add_job "Homebrew backup"  brew  "brew" "up_brew_backup"                ""
-  add_job "Homebrew cleanup" brew  "brew" "brew cleanup --prune=all"      ""
+  add_job "Homebrew cleanup" brew  "brew" "brew cleanup --prune=all"      "" note_brew_cleanup
   add_job "macOS updates"    macos "softwareupdate" "up_macos_update"     ""
   add_job "App Store apps"   mas   "mas"  "mas upgrade"                   snap_mas
   add_job "zsh plugins"      zsh   "git"  "up_zsh_plugins"                snap_zsh_plugins
@@ -452,8 +464,12 @@ record_changes() {
     fi
   else
     # Without snapshots the last log line is often a hint or a progress
-    # message, not a result. The full output stays in the log.
+    # message, not a result. Use the note function of the job if it has one.
+    # The full output stays in the log.
     : > "$RUNDIR/$i.last"
+    if [ -n "${TASK_NOTE[$i]}" ]; then
+      eval "${TASK_NOTE[$i]}" < "$RUNDIR/$i.log" > "$RUNDIR/$i.last" 2>/dev/null
+    fi
   fi
   return 0
 }
