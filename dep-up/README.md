@@ -199,6 +199,21 @@ unless the installed version is a prerelease. Crates from git or from a path, an
 you installed with `--version`, are not checked. The update keeps the features of the first
 install (`--features`, `--all-features`, `--no-default-features`).
 
+### The node update
+
+A new node version starts with no global packages. When the newest LTS is not installed yet,
+the job uses `--reinstall-packages-from` to copy the packages from the node that you use now.
+After the install, the job looks for global packages that the new node still misses. It reads
+the node that you used before the job, and the newest installed node that is older than the
+new one. It skips `npm`, `corepack` and linked local packages.
+
+npm does not record where a global package came from. A package from git, from a tarball or
+from a private registry would come back from the configured registry, and that can be a
+different package with the same name. The job therefore runs `npm view <name>@<version>`
+first. It copies a package only when the configured registry has the exact version that the
+old node has. It skips the other packages and names them in the log, so that you can install
+them yourself. The copy installs by name, so npm gets the latest versions.
+
 ### The backups
 
 Two jobs write a list of what you have installed:

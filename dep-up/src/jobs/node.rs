@@ -134,12 +134,7 @@ pub fn previous_of(versions: &[String], target: &str) -> Option<String> {
 /// The global packages of a node, from the npm of that node. npm can report a bad tree and
 /// still print a valid list: accept the list, but fail without usable JSON.
 fn packages(ctx: &Ctx, sh: &Sh, version: &str) -> Result<Value, String> {
-    let bin = ctx.nvm_dir.join("versions/node").join(version).join("bin");
-    let path = format!(
-        "{}:{}",
-        bin.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
+    let path = node_path(ctx, version);
     let out = sh.output(cmd("npm", &["ls", "-g", "--depth=0", "--json"]).env("PATH", path))?;
     serde_json::from_str(&out.stdout)
         .map_err(|_| format!("cannot read the global packages of node {version}"))
@@ -153,9 +148,9 @@ pub fn names(packages: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The packages to copy: not npm or corepack (each node has its own), and not linked local
-/// packages.
-pub fn copyable(packages: &Value) -> Vec<String> {
+/// The packages to copy, with the version that the source node has: not npm or corepack (each
+/// node has its own), and not linked local packages.
+pub fn copyable(packages: &Value) -> Vec<(String, String)> {
     let local = |v: Option<&Value>| {
         v.and_then(Value::as_str)
             .is_some_and(|s| s.starts_with("file:") || s.starts_with("link:"))
@@ -168,15 +163,43 @@ pub fn copyable(packages: &Value) -> Vec<String> {
                 .filter(|(k, _)| *k != "npm" && *k != "corepack")
                 .filter(|(_, v)| v.get("link").and_then(Value::as_bool) != Some(true))
                 .filter(|(_, v)| !local(v.get("resolved")) && !local(v.get("version")))
-                .map(|(k, _)| k.clone())
+                .map(|(k, v)| {
+                    let ver = v.get("version").and_then(Value::as_str).unwrap_or("");
+                    (k.clone(), ver.to_string())
+                })
                 .collect()
         })
         .unwrap_or_default()
 }
 
+/// True when the output of `npm view <name>@<version> version` names that version. For a
+/// version that the registry does not have, npm prints nothing, or fails.
+pub fn registry_has(stdout: &str, version: &str) -> bool {
+    !version.is_empty()
+        && stdout
+            .lines()
+            .any(|l| l.trim().trim_matches('\'') == version)
+}
+
+/// The PATH that uses the npm of one node version.
+fn node_path(ctx: &Ctx, version: &str) -> String {
+    let bin = ctx.nvm_dir.join("versions/node").join(version).join("bin");
+    format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    )
+}
+
 /// Copies missing global packages from the node that was in use before, and from the newest
 /// installed node that is older than the target. It installs by name, so npm gets the latest
 /// versions.
+///
+/// npm does not record where a global package came from. A package from git, from a tarball
+/// or from a private registry would come back from the configured registry, and that can be a
+/// different package with the same name. So the job copies a package only when the configured
+/// registry has the exact version that the source node has. It skips the other packages and
+/// names them in the log.
 fn sync_globals(ctx: &Ctx, sh: &Sh, target: &str, from: &str) -> Result<(), String> {
     let all = versions(ctx);
     let previous = previous_of(&all, target)
@@ -188,31 +211,48 @@ fn sync_globals(ctx: &Ctx, sh: &Sh, target: &str, from: &str) -> Result<(), Stri
         if source.is_empty() || source == target {
             continue;
         }
-        for p in copyable(&packages(ctx, sh, source)?) {
+        for (p, ver) in copyable(&packages(ctx, sh, source)?) {
             if !have.contains(&p) {
                 have.push(p.clone());
-                missing.push(p);
+                missing.push((p, ver));
             }
         }
     }
     if missing.is_empty() {
         return Ok(());
     }
+    let path = node_path(ctx, target);
+    let mut copy = Vec::new();
+    let mut skipped = Vec::new();
+    for (name, ver) in missing {
+        let spec = format!("{name}@{ver}");
+        let found = !ver.is_empty()
+            && sh
+                .output(cmd("npm", &["view", &spec, "version"]).env("PATH", path.clone()))
+                .is_ok_and(|o| o.ok() && registry_has(&o.stdout, &ver));
+        if found {
+            copy.push(name);
+        } else {
+            if sh.stopped() {
+                return Err("stopped".into());
+            }
+            skipped.push(spec);
+        }
+    }
+    if !skipped.is_empty() {
+        sh.say(&format!(
+            "Skip, because the registry does not have this version (install it yourself): {}",
+            skipped.join(" ")
+        ));
+    }
+    if copy.is_empty() {
+        return Ok(());
+    }
     sh.say(&format!(
         "Install missing global packages: {}",
-        missing.join(" ")
+        copy.join(" ")
     ));
-    let bin = ctx.nvm_dir.join("versions/node").join(target).join("bin");
-    let path = format!(
-        "{}:{}",
-        bin.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    sh.run(
-        cmd("npm", &["install", "-g"])
-            .args(missing)
-            .env("PATH", path),
-    )
+    sh.run(cmd("npm", &["install", "-g"]).args(copy).env("PATH", path))
 }
 
 /// One line for each installed node. The version column holds the npm inside that node.
@@ -253,10 +293,26 @@ mod tests {
     }
 
     #[test]
+    fn the_registry_must_have_the_exact_version() {
+        assert!(registry_has("0.12.0\n", "0.12.0"));
+        assert!(registry_has("'0.12.0'\n", "0.12.0"));
+        assert!(!registry_has("", "0.12.0"));
+        assert!(!registry_has("0.12.1\n", "0.12.0"));
+        assert!(!registry_has("", ""));
+    }
+
+    #[test]
     fn copies_only_registry_packages() {
         let p: Value =
             serde_json::from_str(include_str!("../../tests/fixtures/npm_ls.json")).unwrap();
-        assert_eq!(copyable(&p), vec!["githits", "pnpm"]);
+        let c = copyable(&p);
+        assert_eq!(
+            c,
+            vec![
+                ("githits".to_string(), "0.12.0".to_string()),
+                ("pnpm".to_string(), "9.1.0".to_string())
+            ]
+        );
         assert_eq!(names(&p).len(), 5);
     }
 }
