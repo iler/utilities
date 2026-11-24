@@ -1,0 +1,4 @@
+stable-aarch64-apple-darwin - Update available : 1.99.0 (0d8b3a3d5 2026-10-01) -> 1.100.0 (3acc79c0c 2026-11-05)
+nightly-aarch64-apple-darwin - Update available : 1.101.0-nightly (aaa1111 2026-11-01) -> 1.101.0-nightly (bbb2222 2026-11-20)
+beta-aarch64-apple-darwin - Up to date : 1.101.0-beta.3 (ccc3333 2026-11-18)
+rustup - Update available : 1.29.3 -> 1.30.0

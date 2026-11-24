@@ -1,0 +1,29 @@
+{
+  "installs": {
+    "bat 0.24.0 (sparse+https://index.crates.io/)": {
+      "version_req": null,
+      "bins": ["bat"],
+      "features": [],
+      "all_features": false,
+      "no_default_features": false,
+      "profile": "release",
+      "target": "aarch64-apple-darwin",
+      "rustc": "rustc 1.99.0 (0d8b3a3d5 2026-10-01)"
+    },
+    "mytool 0.1.0 (git+https://github.com/example/mytool#0123456789abcdef)": {
+      "version_req": null,
+      "bins": ["mytool"],
+      "features": [],
+      "all_features": false,
+      "no_default_features": false
+    },
+    "ripgrep 14.1.0 (registry+https://github.com/rust-lang/crates.io-index)": {
+      "version_req": null,
+      "bins": ["rg"],
+      "features": ["pcre2"],
+      "all_features": false,
+      "no_default_features": true,
+      "profile": "release"
+    }
+  }
+}
