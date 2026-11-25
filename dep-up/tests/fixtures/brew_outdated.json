@@ -1,0 +1,25 @@
+{
+  "formulae": [
+    {
+      "name": "git",
+      "installed_versions": ["2.43.0"],
+      "current_version": "2.44.0",
+      "pinned": false,
+      "pinned_version": null
+    },
+    {
+      "name": "python@3.12",
+      "installed_versions": ["3.12.1", "3.12.2"],
+      "current_version": "3.12.3",
+      "pinned": true,
+      "pinned_version": "3.12.2"
+    }
+  ],
+  "casks": [
+    {
+      "name": "iterm2",
+      "installed_versions": ["3.5.0"],
+      "current_version": "3.5.1"
+    }
+  ]
+}

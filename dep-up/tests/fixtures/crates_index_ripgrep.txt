@@ -1,0 +1,5 @@
+{"name":"ripgrep","vers":"14.0.0","deps":[],"cksum":"00","features":{},"yanked":false}
+{"name":"ripgrep","vers":"14.1.0","deps":[],"cksum":"00","features":{},"yanked":false}
+{"name":"ripgrep","vers":"14.1.1","deps":[],"cksum":"00","features":{},"yanked":false}
+{"name":"ripgrep","vers":"14.2.0","deps":[],"cksum":"00","features":{},"yanked":true}
+{"name":"ripgrep","vers":"15.0.0-beta.1","deps":[],"cksum":"00","features":{},"yanked":false}

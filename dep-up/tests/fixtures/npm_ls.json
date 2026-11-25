@@ -1,0 +1,10 @@
+{
+  "name": "lib",
+  "dependencies": {
+    "corepack": { "version": "0.34.0", "overridden": false },
+    "githits": { "version": "0.12.0", "overridden": false },
+    "local-tool": { "version": "1.0.0", "resolved": "file:../../../../projects/local-tool", "overridden": false },
+    "npm": { "version": "11.6.2", "overridden": false },
+    "pnpm": { "version": "9.1.0", "overridden": false }
+  }
+}
